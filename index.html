@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="PixQuest – search millions of free high-quality photos from Unsplash." />
+  <title>PixQuest | Image Search Engine</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+  <link rel="stylesheet" href="css/style.css" />
+  <script>
+    // Apply saved theme before the page paints
+    if (localStorage.getItem("pq_theme") === "dark") document.documentElement.dataset.theme = "dark";
+  </script>
+</head>
+<body>
+  <!-- ===== Header ===== -->
+  <header class="topbar" id="topbar">
+    <a href="./" class="logo"><i class="fa-solid fa-camera-retro"></i> Pix<span>Quest</span></a>
+    <button class="icon-btn" id="themeToggle" aria-label="Switch to dark mode"><i class="fa-solid fa-moon"></i></button>
+  </header>
+
+  <!-- ===== Hero + search ===== -->
+  <section class="hero">
+    <h1>Find the perfect image</h1>
+    <p>Search millions of free, high-quality photos from <a href="https://unsplash.com/?utm_source=pixquest&utm_medium=referral" target="_blank" rel="noopener">Unsplash</a>.</p>
+
+    <form class="search" id="searchForm" role="search">
+      <label for="searchInput" class="sr-only">Search images</label>
+      <i class="fa-solid fa-magnifying-glass"></i>
+      <input type="search" id="searchInput" placeholder="Try “mountains”, “coffee”, “city at night”…"
+             autocomplete="off" maxlength="80" aria-describedby="searchHint" />
+      <button type="button" class="clear-btn" id="clearBtn" aria-label="Clear search" hidden><i class="fa-solid fa-xmark"></i></button>
+      <button type="submit" class="search-btn">Search</button>
+    </form>
+    <p class="hint" id="searchHint">Results update as you type.</p>
+
+    <div class="chips" id="suggestions" aria-label="Popular searches">
+      <button class="chip" data-q="nature">🌿 Nature</button>
+      <button class="chip" data-q="architecture">🏛️ Architecture</button>
+      <button class="chip" data-q="travel">✈️ Travel</button>
+      <button class="chip" data-q="food">🍜 Food</button>
+      <button class="chip" data-q="animals">🦊 Animals</button>
+      <button class="chip" data-q="technology">💻 Technology</button>
+    </div>
+
+    <div class="recent" id="recentWrap" hidden>
+      <span>Recent:</span>
+      <div id="recentList"></div>
+      <button class="link-btn" id="clearRecent">Clear</button>
+    </div>
+  </section>
+
+  <main class="container">
+    <!-- ===== Toolbar: result info + filters ===== -->
+    <div class="toolbar">
+      <p class="result-info" id="resultInfo" aria-live="polite"></p>
+      <div class="filters">
+        <label class="sr-only" for="orientation">Orientation</label>
+        <select id="orientation">
+          <option value="">Any orientation</option>
+          <option value="landscape">Landscape</option>
+          <option value="portrait">Portrait</option>
+          <option value="squarish">Square</option>
+        </select>
+        <label class="sr-only" for="color">Colour</label>
+        <select id="color">
+          <option value="">Any colour</option>
+          <option value="black_and_white">Black &amp; white</option>
+          <option value="black">Black</option>
+          <option value="white">White</option>
+          <option value="yellow">Yellow</option>
+          <option value="orange">Orange</option>
+          <option value="red">Red</option>
+          <option value="purple">Purple</option>
+          <option value="magenta">Magenta</option>
+          <option value="green">Green</option>
+          <option value="teal">Teal</option>
+          <option value="blue">Blue</option>
+        </select>
+        <label class="sr-only" for="orderBy">Sort by</label>
+        <select id="orderBy">
+          <option value="relevant">Most relevant</option>
+          <option value="latest">Newest</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- ===== Messages (empty / error / API key setup) ===== -->
+    <div class="message" id="message" hidden></div>
+
+    <!-- ===== Results grid ===== -->
+    <div class="grid" id="grid" aria-live="polite" aria-busy="false"></div>
+
+    <div class="loader" id="loader" hidden>
+      <span></span><span></span><span></span>
+    </div>
+    <div id="sentinel" aria-hidden="true"></div>
+    <button class="load-more" id="loadMore" hidden>Load more images</button>
+  </main>
+
+  <footer class="footer">
+    <p>Photos provided by <a href="https://unsplash.com/?utm_source=pixquest&utm_medium=referral" target="_blank" rel="noopener">Unsplash</a> · Built by Rehnuma Patel</p>
+  </footer>
+
+  <button class="back-to-top" id="backToTop" aria-label="Back to top"><i class="fa-solid fa-arrow-up"></i></button>
+
+  <!-- ===== Lightbox modal ===== -->
+  <dialog class="lightbox" id="lightbox" aria-labelledby="lbTitle">
+    <button class="lb-close icon-btn" id="lbClose" aria-label="Close"><i class="fa-solid fa-xmark"></i></button>
+    <button class="lb-nav prev" id="lbPrev" aria-label="Previous image"><i class="fa-solid fa-chevron-left"></i></button>
+    <button class="lb-nav next" id="lbNext" aria-label="Next image"><i class="fa-solid fa-chevron-right"></i></button>
+
+    <figure class="lb-figure">
+      <div class="lb-image-wrap" id="lbImageWrap">
+        <img id="lbImage" alt="" />
+        <div class="lb-spinner" aria-hidden="true"></div>
+      </div>
+      <figcaption class="lb-info">
+        <div class="lb-author">
+          <img id="lbAvatar" alt="" />
+          <div>
+            <a id="lbAuthor" target="_blank" rel="noopener"></a>
+            <span id="lbUsername"></span>
+          </div>
+        </div>
+        <p class="lb-title" id="lbTitle"></p>
+        <div class="lb-meta">
+          <span><i class="fa-solid fa-heart"></i> <span id="lbLikes"></span></span>
+          <span><i class="fa-solid fa-expand"></i> <span id="lbSize"></span></span>
+          <span id="lbCounter"></span>
+        </div>
+        <div class="lb-actions">
+          <button class="btn" id="lbDownload"><i class="fa-solid fa-download"></i> Download</button>
+          <a class="btn btn-outline" id="lbUnsplash" target="_blank" rel="noopener"><i class="fa-solid fa-arrow-up-right-from-square"></i> View on Unsplash</a>
+        </div>
+      </figcaption>
+    </figure>
+  </dialog>
+
+  <script src="js/config.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
