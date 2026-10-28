@@ -6,10 +6,12 @@ An image search app that finds photos with the [Unsplash API](https://unsplash.c
 
 ## Features
 - **Debounced search**: results update 500 ms after you stop typing, so the API isn't called on every key press
+- **Response caching**: results are cached for an hour (sessionStorage), so repeating a search or filter costs no API requests. An identical search that is already on screen is skipped.
+- **Rate-limit badge**: reads the `X-Ratelimit-Remaining` header and shows how many requests are left this hour
 - **Request cancelling**: uses `AbortController`, so a slow old request can't replace newer results
-- **Dynamic masonry grid** with lazy loading, the photo's dominant colour as a placeholder and skeleton loaders
-- **Infinite scroll** (IntersectionObserver), with a "Load more" fallback button
-- **Lightbox modal** (`<dialog>`) with previous/next buttons, arrow keys, swipe on mobile, Esc to close, photo details and download
+- **Dynamic masonry grid** with responsive `srcset` images, lazy loading, the photo's dominant colour as a placeholder and skeleton loaders
+- **Infinite scroll** (IntersectionObserver) for the first 3 pages, then a "Load more" button, to save requests. 30 photos per request (the API maximum).
+- **Lightbox modal** (`<dialog>`) with preloaded neighbouring images, previous/next buttons, arrow keys, swipe on mobile, Esc to close, photo details and download
 - **Filters**: orientation, colour and sort order (relevant / newest)
 - **Result management**: total result count, recent searches (localStorage), popular search chips, shareable `?q=` URLs
 - **Error handling**: invalid key (401), rate limit (403/429), offline or network errors, no results, with a "Try again" button

@@ -5,7 +5,7 @@ const CONFIG = {
   ACCESS_KEY: "Gwwymj5G83ze7AxODl6FmRWXDyTWyco3Lv3wHrwoYLc",
   APP_NAME: "pixquest", // used in the attribution links Unsplash requires
   API_URL: "https://api.unsplash.com",
-  PER_PAGE: 24,
+  PER_PAGE: 30, // the API maximum: more photos per request
   DEBOUNCE_MS: 500,
   DEFAULT_QUERY: "mountains",
 };

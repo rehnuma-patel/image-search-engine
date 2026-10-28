@@ -7,6 +7,7 @@ const state = {
   loading: false,
   controller: null, // AbortController for the request in progress
   lightboxIndex: -1,
+  searchKey: "", // query + filters of the results on screen
 };
 
 // ===== Elements =====
@@ -23,6 +24,11 @@ const filters = { orientation: $("orientation"), color: $("color"), orderBy: $("
 
 const KEY_STORAGE = "pq_access_key";
 const RECENT_STORAGE = "pq_recent";
+const CACHE_STORAGE = "pq_cache";
+const RATE_STORAGE = "pq_rate";
+const CACHE_MAX = 20; // responses kept
+const CACHE_TTL = 60 * 60 * 1000; // 1 hour
+const AUTO_PAGES = 3; // infinite scroll loads this many pages, then "Load more" takes over
 
 const getAccessKey = () => CONFIG.ACCESS_KEY || localStorage.getItem(KEY_STORAGE) || "";
 
@@ -48,9 +54,60 @@ class ApiError extends Error {
   }
 }
 
-async function apiGet(path, params = {}, signal) {
+// ----- Response cache: repeated searches cost no API requests -----
+const cache = new Map(readCache());
+
+function readCache() {
+  try {
+    const entries = JSON.parse(sessionStorage.getItem(CACHE_STORAGE)) || [];
+    return entries.filter(([, v]) => Date.now() - v.time < CACHE_TTL);
+  } catch {
+    return [];
+  }
+}
+
+function writeCache(key, data) {
+  cache.delete(key);
+  cache.set(key, { time: Date.now(), data });
+  while (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value); // drop the oldest
+  try {
+    sessionStorage.setItem(CACHE_STORAGE, JSON.stringify([...cache]));
+  } catch {
+    // Storage full: keep the in-memory cache only
+  }
+}
+
+function getCached(key) {
+  const entry = cache.get(key);
+  return entry && Date.now() - entry.time < CACHE_TTL ? entry.data : null;
+}
+
+// ----- Rate limit badge -----
+function updateRateLimit(response) {
+  const remaining = response.headers.get("X-Ratelimit-Remaining");
+  const limit = response.headers.get("X-Ratelimit-Limit");
+  if (remaining === null) return;
+  const info = { remaining: Number(remaining), limit: Number(limit), time: Date.now() };
+  localStorage.setItem(RATE_STORAGE, JSON.stringify(info));
+  renderRateLimit(info);
+}
+
+function renderRateLimit(info) {
+  if (!info || Date.now() - info.time > CACHE_TTL) return; // the limit resets every hour
+  const badge = $("rateBadge");
+  badge.hidden = false;
+  badge.classList.toggle("low", info.remaining <= 10);
+  badge.querySelector("span").textContent = `${info.remaining} / ${info.limit}`;
+  badge.title = `${info.remaining} of ${info.limit} Unsplash requests left this hour`;
+}
+
+async function apiGet(path, params = {}, signal, { useCache = true } = {}) {
   const url = new URL(CONFIG.API_URL + path);
   Object.entries(params).forEach(([k, v]) => v && url.searchParams.set(k, v));
+
+  const cacheKey = url.pathname + url.search;
+  const cached = useCache && getCached(cacheKey);
+  if (cached) return cached;
 
   let response;
   try {
@@ -73,8 +130,14 @@ async function apiGet(path, params = {}, signal) {
     throw new ApiError(messages[response.status] || `Unsplash returned an error (${response.status}).`, response.status);
   }
 
-  return response.json();
+  updateRateLimit(response);
+  const data = await response.json();
+  if (useCache) writeCache(cacheKey, data);
+  return data;
 }
+
+const currentSearchKey = (query) =>
+  [query.toLowerCase(), filters.orientation.value, filters.color.value, filters.orderBy.value].join("|");
 
 function searchPhotos(query, page, signal) {
   return apiGet(
@@ -98,12 +161,16 @@ async function runSearch(query, { newSearch = true, remember = true } = {}) {
 
   if (!getAccessKey()) return showKeySetup();
 
+  // Same words and filters as the results already on screen: nothing to do
+  if (newSearch && currentSearchKey(query) === state.searchKey && state.photos.length) return;
+
   // Cancel the previous request so an old, slow response can't overwrite new results
   if (state.controller) state.controller.abort();
   state.controller = new AbortController();
 
   if (newSearch) {
     state.query = query;
+    state.searchKey = currentSearchKey(query);
     state.page = 1;
     state.photos = [];
     grid.innerHTML = "";
@@ -133,6 +200,7 @@ async function runSearch(query, { newSearch = true, remember = true } = {}) {
   } catch (err) {
     if (err.name === "AbortError") return;
     if (!newSearch) state.page--; // retry the same page next time
+    else state.searchKey = ""; // allow the same search to be retried
     removeSkeletons();
     if (err.status === 401) return showKeySetup(true);
     showMessage("error", "Something went wrong", err.message, true);
@@ -141,8 +209,9 @@ async function runSearch(query, { newSearch = true, remember = true } = {}) {
   }
 }
 
-function loadNextPage() {
+function loadNextPage({ auto = false } = {}) {
   if (state.loading || state.page >= state.totalPages) return;
+  if (auto && state.page >= AUTO_PAGES) return; // save requests: the button loads further pages
   state.page++;
   runSearch(state.query, { newSearch: false });
 }
@@ -183,7 +252,8 @@ function renderPhotos(photos) {
     const alt = photo.alt_description || photo.description || `Photo by ${photo.user.name}`;
     card.innerHTML = `
       <button class="card-open" aria-label="Open image: ${escapeHtml(alt)}">
-        <img src="${photo.urls.small}" alt="${escapeHtml(alt)}" loading="lazy" />
+        <img src="${photo.urls.small}" srcset="${srcset(photo)}" sizes="(max-width: 560px) 50vw, (max-width: 1100px) 33vw, 25vw"
+             alt="${escapeHtml(alt)}" loading="lazy" decoding="async" />
       </button>
       <div class="card-overlay">
         <a class="card-author" href="${utm(photo.user.links.html)}" target="_blank" rel="noopener">
@@ -202,6 +272,10 @@ function renderPhotos(photos) {
 
   grid.appendChild(fragment);
 }
+
+// Let the browser pick the right image width for the screen
+const srcset = (photo) =>
+  [200, 400, 600, 800].map((w) => `${photo.urls.raw}&w=${w}&q=75&fm=jpg&fit=max ${w}w`).join(", ");
 
 function escapeHtml(text) {
   const div = document.createElement("div");
@@ -343,7 +417,7 @@ document.addEventListener("keydown", (e) => {
 // ===== Infinite scroll =====
 new IntersectionObserver(
   (entries) => {
-    if (entries[0].isIntersecting && state.photos.length) loadNextPage();
+    if (entries[0].isIntersecting && state.photos.length) loadNextPage({ auto: true });
   },
   { rootMargin: "600px" }
 ).observe($("sentinel"));
@@ -382,6 +456,11 @@ function showLightboxPhoto() {
 
   $("lbPrev").disabled = state.lightboxIndex === 0;
   $("lbNext").disabled = state.lightboxIndex === state.photos.length - 1;
+
+  // Preload the previous and next images so arrow navigation feels instant
+  [state.lightboxIndex - 1, state.lightboxIndex + 1].forEach((i) => {
+    if (state.photos[i]) new Image().src = state.photos[i].urls.regular;
+  });
 
   // Load more results in the background when nearing the end
   if (state.lightboxIndex >= state.photos.length - 3) loadNextPage();
@@ -435,7 +514,8 @@ $("lbDownload").addEventListener("click", async () => {
   const btn = $("lbDownload");
   btn.disabled = true;
   try {
-    const { url } = await apiGet(new URL(photo.links.download_location).pathname, { ixid: new URL(photo.links.download_location).searchParams.get("ixid") });
+    const downloadUrl = new URL(photo.links.download_location);
+    const { url } = await apiGet(downloadUrl.pathname, { ixid: downloadUrl.searchParams.get("ixid") }, undefined, { useCache: false });
     const blob = await (await fetch(url)).blob();
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
@@ -474,6 +554,9 @@ $("backToTop").addEventListener("click", () => window.scrollTo({ top: 0, behavio
 // ===== Start =====
 updateThemeIcon();
 renderRecent();
+try {
+  renderRateLimit(JSON.parse(localStorage.getItem(RATE_STORAGE)));
+} catch {}
 
 const urlQuery = new URLSearchParams(location.search).get("q");
 searchInput.value = urlQuery || "";
